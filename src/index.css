@@ -1,0 +1,96 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  background: #faf8f3;
+  color: #1a1a2e;
+  font-family: 'Inter', -apple-system, 'PingFang SC', sans-serif;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* 自定义滑块样式 */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: #f8f7f4;
+  outline: none;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e85d5d;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(232, 93, 93, 0.3);
+  border: 3px solid #ffffff;
+}
+input[type='range']::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e85d5d;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(232, 93, 93, 0.3);
+  border: 3px solid #ffffff;
+}
+
+/* 加载动画 */
+@keyframes wm-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.wm-dot {
+  animation: wm-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes wm-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.wm-fade-in {
+  animation: wm-fade-in 0.4s ease-out;
+}
+
+@keyframes wm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.wm-spin {
+  animation: wm-spin 1s linear infinite;
+}
