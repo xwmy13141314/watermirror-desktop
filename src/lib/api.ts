@@ -10,11 +10,34 @@ function setToken(token: string) {
   localStorage.setItem('wm_token', token)
 }
 
+function getUserId(): string | null {
+  return localStorage.getItem('wm_user_id')
+}
+
+function setUserId(id: string) {
+  localStorage.setItem('wm_user_id', id)
+}
+
+export function isLoggedIn(): boolean {
+  return !!getToken() && !!getUserId()
+}
+
+export function logout() {
+  localStorage.removeItem('wm_token')
+  localStorage.removeItem('wm_user_id')
+  localStorage.removeItem('wm_nickname')
+}
+
+export function getNickname(): string {
+  return localStorage.getItem('wm_nickname') || '水镜用户'
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
   const token = getToken()
+  const userId = getUserId()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
@@ -22,13 +45,23 @@ async function request<T>(
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
+  if (userId) {
+    headers['x-user-id'] = userId
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(`API ${res.status}: ${text || res.statusText}`)
+    let msg = `API ${res.status}`
+    try {
+      const err = JSON.parse(text)
+      msg = err.error || msg
+    } catch {
+      msg = text || res.statusText
+    }
+    throw new Error(msg)
   }
   return res.json() as Promise<T>
 }
@@ -154,6 +187,47 @@ export async function setModel(model: string): Promise<ConfigStatus> {
 
 // ===== API 函数 =====
 
+export interface AuthUser {
+  id: string
+  email?: string
+  nickname: string
+}
+
+export interface AuthResponse {
+  token: string
+  user: AuthUser
+}
+
+export async function register(email: string, password: string): Promise<AuthResponse> {
+  const data = await request<AuthResponse>('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  })
+  if (data.token) {
+    setToken(data.token)
+    setUserId(data.user.id)
+    localStorage.setItem('wm_nickname', data.user.nickname)
+  }
+  return data
+}
+
+export async function login(email: string, password: string): Promise<AuthResponse> {
+  const data = await request<AuthResponse>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  })
+  if (data.token) {
+    setToken(data.token)
+    setUserId(data.user.id)
+    localStorage.setItem('wm_nickname', data.user.nickname)
+  }
+  return data
+}
+
+export async function getCurrentUser(): Promise<{ user: AuthUser | null }> {
+  return request<{ user: AuthUser | null }>('/auth/me')
+}
+
 export async function guestLogin(): Promise<{ token: string }> {
   const data = await request<{ token: string }>('/auth/guest', {
     method: 'POST',
@@ -217,23 +291,3 @@ export async function saveApiKey(key: string): Promise<void> {
     body: JSON.stringify({ key }),
   })
 }
-
-// ===== 启动时自动游客登录 =====
-let loginPromise: Promise<void> | null = null
-
-export function ensureGuestLogin(): Promise<void> {
-  if (getToken()) return Promise.resolve()
-  if (loginPromise) return loginPromise
-  loginPromise = guestLogin()
-    .then(() => undefined)
-    .catch((e) => {
-      loginPromise = null
-      throw e
-    })
-  return loginPromise
-}
-
-// 应用启动时自动调用
-ensureGuestLogin().catch(() => {
-  /* 静默失败，后续请求会重试 */
-})

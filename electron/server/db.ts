@@ -6,11 +6,13 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import crypto from 'crypto'
 
 let db: Database.Database
 
 export interface LocalUser {
   id: string
+  email: string | null
   nickname: string
   created_at: string
 }
@@ -65,6 +67,8 @@ export function initDB(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
+      email TEXT UNIQUE,
+      password_hash TEXT,
       nickname TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
@@ -113,6 +117,14 @@ export function initDB(): void {
     CREATE INDEX IF NOT EXISTS idx_scores_user_date ON evolution_scores(user_id, date);
     CREATE INDEX IF NOT EXISTS idx_feedbacks_user_date ON feedbacks(user_id, date);
   `)
+
+  // 兼容旧数据库：如果 users 表缺少 email/password_hash 列则添加
+  try {
+    db.prepare('SELECT email FROM users LIMIT 0').get()
+  } catch {
+    db.exec('ALTER TABLE users ADD COLUMN email TEXT;')
+    db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT;')
+  }
 }
 
 // ===== 用户操作 =====
@@ -128,6 +140,7 @@ export function createLocalUser(): LocalUser {
 
   const user: LocalUser = {
     id: 'local_user',
+    email: null,
     nickname: '水镜用户',
     created_at: new Date().toISOString(),
   }
@@ -232,4 +245,69 @@ export function saveScore(userId: string, date: string, scores: {
     INSERT INTO evolution_scores (id, user_id, date, e_grit, e_insight, e_optimize)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(id, userId, date, scores.e_grit, scores.e_insight, scores.e_optimize)
+}
+
+// ===== 注册 / 登录 =====
+
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex')
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex')
+  return `${salt}:${hash}`
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+  const [salt, hash] = stored.split(':')
+  const verifyHash = crypto.scryptSync(password, salt, 64).toString('hex')
+  return hash === verifyHash
+}
+
+export function registerUser(email: string, password: string): { user: LocalUser; token: string } {
+  // 检查邮箱是否已注册
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email)
+  if (existing) {
+    throw new Error('该邮箱已注册')
+  }
+
+  const id = `u_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  const nickname = email.split('@')[0]
+  const passwordHash = hashPassword(password)
+  const token = crypto.randomBytes(32).toString('hex')
+
+  db.prepare(`
+    INSERT INTO users (id, email, password_hash, nickname, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, email, passwordHash, nickname, new Date().toISOString())
+
+  return {
+    user: { id, email, nickname, created_at: new Date().toISOString() },
+    token,
+  }
+}
+
+export function loginUser(email: string, password: string): { user: LocalUser; token: string } {
+  const row = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as (LocalUser & { password_hash: string }) | undefined
+  if (!row) {
+    throw new Error('邮箱未注册')
+  }
+  if (!row.password_hash) {
+    throw new Error('该账号未设置密码，请使用注册功能')
+  }
+  if (!verifyPassword(password, row.password_hash)) {
+    throw new Error('密码错误')
+  }
+
+  const token = crypto.randomBytes(32).toString('hex')
+  return {
+    user: { id: row.id, email: row.email, nickname: row.nickname, created_at: row.created_at },
+    token,
+  }
+}
+
+export function getUserById(userId: string): LocalUser | null {
+  const row = db.prepare('SELECT id, email, nickname, created_at FROM users WHERE id = ?').get(userId) as LocalUser | undefined
+  return row || null
+}
+
+export function updateNickname(userId: string, nickname: string): void {
+  db.prepare('UPDATE users SET nickname = ? WHERE id = ?').run(nickname, userId)
 }

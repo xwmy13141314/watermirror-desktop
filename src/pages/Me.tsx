@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BottomNav from '../components/BottomNav'
-import { getProfile, type Profile } from '../lib/api'
+import { getProfile, getNickname, logout, type Profile } from '../lib/api'
 
 const menuItems = [
   {
@@ -55,14 +55,25 @@ const menuItems = [
 export default function Me() {
   const navigate = useNavigate()
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [nickname, setNickname] = useState(getNickname())
 
   useEffect(() => {
+    setNickname(getNickname())
     getProfile()
       .then((res) => {
         if (res.profile) setProfile(res.profile)
       })
       .catch(() => {})
   }, [])
+
+  const handleLogout = () => {
+    if (confirm('确定退出登录？')) {
+      logout()
+      navigate('/auth')
+    }
+  }
+
+  const isGuest = localStorage.getItem('wm_token') === 'guest'
 
   return (
     <div className="min-h-screen pb-24 wm-fade-in">
@@ -75,14 +86,32 @@ export default function Me() {
         {/* 用户信息卡片 */}
         <div className="bg-wm-card rounded-wm-lg shadow-wm-md p-5 flex items-center gap-4">
           <div className="w-14 h-14 rounded-full bg-wm-accent-light flex items-center justify-center">
-            <span className="text-2xl font-serif text-wm-accent">镜</span>
+            <span className="text-2xl font-serif text-wm-accent">
+              {nickname.charAt(0).toUpperCase()}
+            </span>
           </div>
-          <div>
-            <p className="text-sm font-semibold text-wm-text">水镜用户</p>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-wm-text">{nickname}</p>
             <p className="text-xs text-wm-text-tertiary mt-0.5">
-              游客账号 · 点击登录
+              {isGuest ? '游客模式' : '已注册用户'}
             </p>
           </div>
+          {!isGuest && (
+            <button
+              onClick={handleLogout}
+              className="text-xs text-wm-accent px-3 py-1.5 rounded-wm-sm border border-wm-border"
+            >
+              退出
+            </button>
+          )}
+          {isGuest && (
+            <button
+              onClick={() => navigate('/auth')}
+              className="text-xs text-wm-accent px-3 py-1.5 rounded-wm-sm border border-wm-border"
+            >
+              登录
+            </button>
+          )}
         </div>
 
         {/* 天赋身份卡 */}
@@ -146,7 +175,7 @@ export default function Me() {
 
         {/* 版本号 */}
         <p className="text-center text-xs text-wm-text-tertiary pt-4">
-          水镜进化 v1.0.0
+          水镜进化 v1.1.0
         </p>
       </div>
 

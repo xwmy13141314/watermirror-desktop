@@ -19,6 +19,10 @@ import {
   saveFeedback,
   getScores,
   saveScore,
+  registerUser,
+  loginUser,
+  getUserById,
+  updateNickname,
   type ProfileRow,
 } from './db'
 import {
@@ -68,7 +72,76 @@ export function startServer(): Promise<http.Server> {
     res.json({ status: 'ok', service: 'watermirror' })
   })
 
-  // ===== 认证（简化：单用户本地） =====
+  // 辅助函数：从请求头获取当前用户 ID，没有则 fallback 到 local_user
+  function getCurrentUserId(req: express.Request): string {
+    const userId = req.headers['x-user-id'] as string
+    if (userId) return userId
+    // fallback: 使用 local_user（兼容旧前端）
+    const local = getLocalUser() || createLocalUser()
+    return local.id
+  }
+
+  // ===== 认证 =====
+
+  // 邮箱注册
+  app.post('/api/v1/auth/register', (req, res) => {
+    try {
+      const { email, password } = req.body
+      if (!email || !password) {
+        return res.status(400).json({ error: '邮箱和密码不能为空' })
+      }
+      if (password.length < 6) {
+        return res.status(400).json({ error: '密码至少 6 位' })
+      }
+      const result = registerUser(email, password)
+      res.json(result)
+    } catch (err: any) {
+      res.status(400).json({ error: err.message })
+    }
+  })
+
+  // 邮箱登录
+  app.post('/api/v1/auth/login', (req, res) => {
+    try {
+      const { email, password } = req.body
+      if (!email || !password) {
+        return res.status(400).json({ error: '邮箱和密码不能为空' })
+      }
+      const result = loginUser(email, password)
+      res.json(result)
+    } catch (err: any) {
+      res.status(401).json({ error: err.message })
+    }
+  })
+
+  // 获取当前用户信息（通过 token → userId，存储在 localStorage）
+  app.get('/api/v1/auth/me', (req, res) => {
+    const userId = req.headers['x-user-id'] as string
+    if (!userId) {
+      return res.json({ user: null })
+    }
+    const user = getUserById(userId)
+    if (!user) {
+      return res.json({ user: null })
+    }
+    res.json({ user: { id: user.id, email: user.email, nickname: user.nickname } })
+  })
+
+  // 更新昵称
+  app.post('/api/v1/auth/profile', (req, res) => {
+    const userId = req.headers['x-user-id'] as string
+    if (!userId) {
+      return res.status(401).json({ error: '未登录' })
+    }
+    const { nickname } = req.body
+    if (nickname) {
+      updateNickname(userId, nickname)
+    }
+    const user = getUserById(userId)
+    res.json({ user: { id: user?.id, email: user?.email, nickname: user?.nickname } })
+  })
+
+  // 兼容旧接口：游客登录（自动创建本地用户）
   app.post('/api/v1/auth/guest', (_req, res) => {
     const user = getLocalUser() || createLocalUser()
     res.json({
@@ -101,17 +174,15 @@ export function startServer(): Promise<http.Server> {
       const profileData = await generateProfileFromChat(messages)
 
       // 保存到数据库
-      const user = getLocalUser()
-      if (user) {
-        saveProfile(user.id, {
-          identity_title: profileData.identity_title || '',
-          identity_subtitle: profileData.identity_subtitle || '',
-          talents: profileData.top_talents || [],
-          composition: profileData.ability_breakdown
-            ? Object.entries(profileData.ability_breakdown).map(([name, score]) => ({ name, score }))
-            : [],
-        })
-      }
+      const userId = getCurrentUserId(req)
+      saveProfile(userId, {
+        identity_title: profileData.identity_title || '',
+        identity_subtitle: profileData.identity_subtitle || '',
+        talents: profileData.top_talents || [],
+        composition: profileData.ability_breakdown
+          ? Object.entries(profileData.ability_breakdown).map(([name, score]) => ({ name, score }))
+          : [],
+      })
 
       res.json({ profile: profileData })
     } catch (err: any) {
@@ -120,13 +191,9 @@ export function startServer(): Promise<http.Server> {
   })
 
   // 获取当前用户的天赋画像
-  app.get('/api/v1/assessment/profile', (_req, res) => {
-    const user = getLocalUser()
-    if (!user) {
-      return res.json({ profile: null })
-    }
-
-    const row = getProfile(user.id)
+  app.get('/api/v1/assessment/profile', (req, res) => {
+    const userId = getCurrentUserId(req)
+    const row = getProfile(userId)
     if (!row) {
       return res.json({ profile: null })
     }
@@ -142,15 +209,12 @@ export function startServer(): Promise<http.Server> {
   app.post('/api/v1/daily/submit', async (req, res) => {
     try {
       const { energy, chaos, frustration, in_flow, content } = req.body
-      const user = getLocalUser()
-      if (!user) {
-        return res.status(401).json({ error: 'Not initialized' })
-      }
+      const userId = getCurrentUserId(req)
 
       const today = new Date().toISOString().slice(0, 10)
 
       // 保存复盘条目
-      const entryId = submitEntry(user.id, today, {
+      const entryId = submitEntry(userId, today, {
         energy,
         chaos,
         discomfort: frustration, // 前端用 frustration，后端用 discomfort
@@ -160,7 +224,7 @@ export function startServer(): Promise<http.Server> {
 
       // 计算进化分数
       const [e_grit, e_insight, e_optimize] = calculateDailyScore(energy, chaos, frustration)
-      saveScore(user.id, today, { e_grit, e_insight, e_optimize })
+      saveScore(userId, today, { e_grit, e_insight, e_optimize })
 
       // 生成反馈
       const routineType = getCurrentRoutine()
@@ -170,7 +234,7 @@ export function startServer(): Promise<http.Server> {
       )
 
       // 保存反馈
-      saveFeedback(user.id, entryId, today, {
+      saveFeedback(userId, entryId, today, {
         routine_type: routineType,
         steady_pressure: feedbackData.soothing_text || '',
         action_items: feedbackData.actions || [],
@@ -195,12 +259,9 @@ export function startServer(): Promise<http.Server> {
   // 获取某天的反馈
   app.get('/api/v1/daily/feedback', (req, res) => {
     const date = req.query.date as string
-    const user = getLocalUser()
-    if (!user) {
-      return res.json({ feedback: null })
-    }
+    const userId = getCurrentUserId(req)
 
-    const row = getFeedback(user.id, date)
+    const row = getFeedback(userId, date)
     if (!row) {
       return res.json({ feedback: null })
     }
@@ -219,13 +280,9 @@ export function startServer(): Promise<http.Server> {
   // ===== 进化曲线 =====
   app.get('/api/v1/curve', (req, res) => {
     const days = parseInt(req.query.days as string) || 30
-    const user = getLocalUser()
+    const userId = getCurrentUserId(req)
 
-    if (!user) {
-      return res.json({ scores: [], ma7: [], ma30: [] })
-    }
-
-    const rows = getScores(user.id, days)
+    const rows = getScores(userId, days)
 
     if (rows.length === 0) {
       // 无数据时返回 mock 数据（7天示例）
