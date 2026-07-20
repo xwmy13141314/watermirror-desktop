@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BottomNav from '../components/BottomNav'
-import { getProfile, getDailyFeedback, type Profile, type DailyFeedback } from '../lib/api'
+import { getProfile, getDailyFeedback, getEvolutionCurve, getConfigStatus, type Profile, type DailyFeedback } from '../lib/api'
 
 function getGreeting(): string {
   const h = new Date().getHours()
@@ -28,13 +28,19 @@ export default function Home() {
   const navigate = useNavigate()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [feedback, setFeedback] = useState<DailyFeedback | null>(null)
-  const [talentIndex] = useState<number>(72)
-  const [change] = useState<number>(2.3)
+  const [talentIndex, setTalentIndex] = useState<number>(0)
+  const [change, setChange] = useState<number>(0)
+  const [hasApiKey, setHasApiKey] = useState<boolean>(true)
   const [actions, setActions] = useState<
     { text: string; category: string; estimated_time: string; done: boolean }[]
   >([])
 
   useEffect(() => {
+    // 检查 AI 配置状态
+    getConfigStatus()
+      .then((res) => setHasApiKey(res.hasKey))
+      .catch(() => {})
+
     getProfile()
       .then((res) => {
         if (res.profile) setProfile(res.profile)
@@ -47,6 +53,21 @@ export default function Home() {
           setActions(
             res.feedback.actions.map((a) => ({ ...a, done: false })),
           )
+        }
+      })
+      .catch(() => {})
+    // 获取进化曲线，计算天赋指数
+    getEvolutionCurve(30)
+      .then((res) => {
+        if (res.scores && res.scores.length > 0) {
+          const latest = res.scores[res.scores.length - 1]
+          const index = (latest.grit + latest.insight + latest.optimize) / 3
+          setTalentIndex(Math.round(index * 10) / 10)
+          if (res.scores.length >= 2) {
+            const prev = res.scores[res.scores.length - 2]
+            const prevIndex = (prev.grit + prev.insight + prev.optimize) / 3
+            setChange(Math.round((index - prevIndex) * 10) / 10)
+          }
         }
       })
       .catch(() => {})
@@ -69,6 +90,29 @@ export default function Home() {
       </header>
 
       <div className="px-5 space-y-4">
+        {/* API Key 未配置提示 */}
+        {!hasApiKey && (
+          <button
+            onClick={() => navigate('/settings')}
+            className="w-full bg-wm-accent-light rounded-wm-md p-3 flex items-center gap-3 active:scale-[0.98] transition-transform"
+          >
+            <span className="w-8 h-8 rounded-full bg-wm-accent flex items-center justify-center flex-shrink-0">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+            </span>
+            <div className="flex-1 text-left">
+              <p className="text-sm font-medium text-wm-accent">未配置 AI 大模型</p>
+              <p className="text-xs text-wm-text-secondary mt-0.5">点击配置 Kimi/通义/DeepSeek/GLM API Key</p>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E85D5D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
+        )}
+
         {/* 天赋指数卡片 */}
         <div className="bg-wm-card rounded-wm-lg shadow-wm-md p-5">
           <div className="flex items-center justify-between">
@@ -76,17 +120,21 @@ export default function Home() {
               <p className="text-xs text-wm-text-secondary">天赋指数</p>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-4xl font-bold text-wm-text">
-                  {talentIndex.toFixed(1)}
+                  {talentIndex > 0 ? talentIndex.toFixed(1) : '--'}
                 </span>
-                <span
-                  className={`text-sm font-medium ${
-                    change >= 0 ? 'text-wm-chart-2' : 'text-wm-accent'
-                  }`}
-                >
-                  {change >= 0 ? '↑' : '↓'} {Math.abs(change).toFixed(1)}
-                </span>
+                {talentIndex > 0 && (
+                  <span
+                    className={`text-sm font-medium ${
+                      change >= 0 ? 'text-wm-chart-2' : 'text-wm-accent'
+                    }`}
+                  >
+                    {change >= 0 ? '↑' : '↓'} {Math.abs(change).toFixed(1)}
+                  </span>
+                )}
               </div>
-              <p className="text-xs text-wm-text-tertiary mt-0.5">较昨日</p>
+              <p className="text-xs text-wm-text-tertiary mt-0.5">
+                {talentIndex > 0 ? '较昨日' : '完成测评后生成'}
+              </p>
             </div>
             <div className="w-16 h-16 rounded-full border-4 border-wm-accent-light flex items-center justify-center">
               <span className="text-lg font-serif text-wm-accent">镜</span>

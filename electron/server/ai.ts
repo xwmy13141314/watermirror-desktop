@@ -1,9 +1,70 @@
 /**
- * AI 服务 - 通义千问 DashScope API 封装
- * 移植自 Python ai.py
+ * AI 服务 - 多模型统一封装
+ * 支持：阿里通义千问 / Kimi(月之暗面) / DeepSeek / 智谱GLM
+ * 所有 provider 统一使用 OpenAI 兼容格式
  */
 
-const DASHSCOPE_BASE_URL = 'https://dashscope.aliyuncs.com/api/v1'
+// ===== Provider 配置 =====
+
+export interface ProviderConfig {
+  id: string
+  name: string
+  baseUrl: string
+  defaultModel: string
+  models: string[]
+  getKeyUrl: string
+  description: string
+}
+
+export const PROVIDERS: Record<string, ProviderConfig> = {
+  dashscope: {
+    id: 'dashscope',
+    name: '阿里通义千问',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    defaultModel: 'qwen-turbo',
+    models: ['qwen-turbo', 'qwen-plus', 'qwen-max'],
+    getKeyUrl: 'https://dashscope.console.aliyun.com/apiKey',
+    description: '阿里云通义千问，免费额度较多',
+  },
+  kimi: {
+    id: 'kimi',
+    name: 'Kimi (月之暗面)',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    defaultModel: 'moonshot-v1-8k',
+    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    getKeyUrl: 'https://platform.moonshot.cn/console/api-keys',
+    description: '长上下文能力强，适合长对话',
+  },
+  deepseek: {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    defaultModel: 'deepseek-chat',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    getKeyUrl: 'https://platform.deepseek.com/api_keys',
+    description: '推理能力强，性价比高',
+  },
+  glm: {
+    id: 'glm',
+    name: '智谱 GLM',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    defaultModel: 'glm-4-flash',
+    models: ['glm-4-flash', 'glm-4', 'glm-4-plus'],
+    getKeyUrl: 'https://open.bigmodel.cn/manage/apikey',
+    description: '清华系大模型，glm-4-flash 免费',
+  },
+}
+
+export function getProviderList() {
+  return Object.values(PROVIDERS).map((p) => ({
+    id: p.id,
+    name: p.name,
+    description: p.description,
+    defaultModel: p.defaultModel,
+    models: p.models,
+    getKeyUrl: p.getKeyUrl,
+  }))
+}
 
 // ===== 配置文件管理 =====
 
@@ -11,63 +72,131 @@ import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
 
-interface Config {
-  dashscopeApiKey: string
+interface AppConfig {
+  provider: string
+  apiKey: string
+  model: string
 }
 
 function getConfigPath(): string {
   return path.join(app.getPath('userData'), 'config.json')
 }
 
-export function getApiKey(): string {
+function readConfig(): AppConfig {
   try {
     const configPath = getConfigPath()
     if (fs.existsSync(configPath)) {
-      const config: Config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-      return config.dashscopeApiKey || ''
+      const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      // 兼容旧版配置（dashscopeApiKey）
+      if (raw.dashscopeApiKey && !raw.apiKey) {
+        return { provider: 'dashscope', apiKey: raw.dashscopeApiKey, model: 'qwen-turbo' }
+      }
+      return {
+        provider: raw.provider || 'dashscope',
+        apiKey: raw.apiKey || '',
+        model: raw.model || PROVIDERS[raw.provider || 'dashscope']?.defaultModel || 'qwen-turbo',
+      }
     }
   } catch {}
-  return ''
+  return { provider: 'dashscope', apiKey: '', model: 'qwen-turbo' }
 }
 
-export function saveApiKey(key: string): void {
+function writeConfig(config: AppConfig): void {
   const configPath = getConfigPath()
-  const config: Config = { dashscopeApiKey: key }
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
 }
 
-// ===== DashScope API 调用 =====
+export function getApiKey(): string {
+  return readConfig().apiKey
+}
+
+export function saveApiKey(key: string): void {
+  const config = readConfig()
+  config.apiKey = key
+  writeConfig(config)
+}
+
+export function getProvider(): string {
+  return readConfig().provider
+}
+
+export function setProvider(providerId: string): void {
+  const config = readConfig()
+  config.provider = providerId
+  config.model = PROVIDERS[providerId]?.defaultModel || 'qwen-turbo'
+  writeConfig(config)
+}
+
+export function getModel(): string {
+  return readConfig().model
+}
+
+export function setModel(model: string): void {
+  const config = readConfig()
+  config.model = model
+  writeConfig(config)
+}
+
+export function getConfigStatus(): { provider: string; hasKey: boolean; model: string } {
+  const config = readConfig()
+  return {
+    provider: config.provider,
+    hasKey: !!config.apiKey,
+    model: config.model,
+  }
+}
+
+// ===== 统一 OpenAI 兼容格式调用 =====
 
 async function chatCompletion(
   model: string,
   messages: Array<{ role: string; content: string }>,
   temperature: number = 0.7,
 ): Promise<any> {
-  const apiKey = getApiKey()
-  if (!apiKey) {
+  const config = readConfig()
+  if (!config.apiKey) {
     throw new Error('No API key')
   }
 
+  const provider = PROVIDERS[config.provider] || PROVIDERS.dashscope
+  const useModel = model || config.model || provider.defaultModel
+
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
+    Authorization: `Bearer ${config.apiKey}`,
     'Content-Type': 'application/json',
   }
   const payload = {
-    model,
-    input: { messages },
-    parameters: { temperature, result_format: 'message' },
+    model: useModel,
+    messages,
+    temperature,
   }
 
-  const response = await fetch(`${DASHSCOPE_BASE_URL}/services/aigc/text-generation/generation`, {
+  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),
   })
 
   if (!response.ok) {
-    throw new Error(`DashScope API error: ${response.status}`)
+    const errText = await response.text().catch(() => '')
+    throw new Error(`${provider.name} API error: ${response.status} ${errText}`)
   }
   return response.json()
+}
+
+/** 从 OpenAI 兼容响应中提取文本 */
+function extractText(result: any): string | null {
+  if (!result) return null
+  // OpenAI 兼容格式: choices[0].message.content
+  if (result.choices?.[0]?.message?.content) {
+    return result.choices[0].message.content
+  }
+  // 兼容旧格式
+  if (result.output?.text) return result.output.text
+  if (result.output?.choices?.[0]?.message?.content) {
+    return result.output.choices[0].message.content
+  }
+  return null
 }
 
 // ===== 测评 Agent =====
@@ -217,8 +346,8 @@ const MOCK_FEEDBACK = {
 export async function assessmentChat(messages: Array<{ role: string; content: string }>): Promise<string> {
   const fullMessages = [{ role: 'system', content: CHAT_SYSTEM_PROMPT }, ...messages]
   try {
-    const result = await chatCompletion('qwen-max', fullMessages, 0.85)
-    const text = result?.output?.text
+    const result = await chatCompletion('', fullMessages, 0.85)
+    const text = extractText(result)
     if (text) return text
     return mockChatReply(messages.filter((m) => m.role === 'user').length)
   } catch {
@@ -235,8 +364,8 @@ export async function generateProfileFromChat(messages: Array<{ role: string; co
     { role: 'user', content: `以下是对话记录：\n${dialogText}\n\n请根据对话生成天赋画像JSON。` },
   ]
   try {
-    const result = await chatCompletion('qwen-max', fullMessages, 0.8)
-    let text = result?.output?.text
+    const result = await chatCompletion('', fullMessages, 0.8)
+    let text = extractText(result)
     if (!text) return mockProfile()
 
     // 清理 markdown 代码块
@@ -265,8 +394,8 @@ export async function generateFeedback(entry: {
     { role: 'user', content: `用户复盘：${JSON.stringify(entry)}\n套路类型：${routineType}` },
   ]
   try {
-    const result = await chatCompletion('qwen-turbo', messages, 0.7)
-    let text = result?.output?.text
+    const result = await chatCompletion('', messages, 0.7)
+    let text = extractText(result)
     if (!text) return { ...MOCK_FEEDBACK, pattern_type: routineType }
 
     text = text.trim()

@@ -27,6 +27,10 @@ import {
   generateFeedback,
   getApiKey,
   saveApiKey,
+  getProviderList,
+  getConfigStatus,
+  setProvider,
+  setModel,
 } from './ai'
 import { calculateDailyScore, movingAverage } from './evolution'
 import { getCurrentRoutine, getRoutineConfig } from './feedback'
@@ -271,10 +275,41 @@ export function startServer(): Promise<http.Server> {
   })
 
   // ===== 设置 =====
+
+  // 获取 AI 配置状态（provider + hasKey + model）
+  app.get('/api/v1/settings/config', (_req, res) => {
+    res.json(getConfigStatus())
+  })
+
+  // 获取可用 provider 列表
+  app.get('/api/v1/settings/providers', (_req, res) => {
+    res.json({ providers: getProviderList() })
+  })
+
+  // 切换 provider
+  app.post('/api/v1/settings/provider', (req, res) => {
+    const { provider } = req.body
+    if (provider) {
+      setProvider(provider)
+    }
+    res.json(getConfigStatus())
+  })
+
+  // 切换 model
+  app.post('/api/v1/settings/model', (req, res) => {
+    const { model } = req.body
+    if (model) {
+      setModel(model)
+    }
+    res.json(getConfigStatus())
+  })
+
+  // 兼容旧接口：获取 API Key 状态
   app.get('/api/v1/settings/api-key', (_req, res) => {
     res.json({ hasKey: !!getApiKey() })
   })
 
+  // 兼容旧接口：保存 API Key
   app.post('/api/v1/settings/api-key', (req, res) => {
     const { key } = req.body
     if (key) {

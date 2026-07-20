@@ -114,6 +114,44 @@ export interface ApiKeyStatusResponse {
   hasKey: boolean
 }
 
+// ===== Provider 相关 =====
+export interface Provider {
+  id: string
+  name: string
+  description: string
+  defaultModel: string
+  models: string[]
+  getKeyUrl: string
+}
+
+export interface ConfigStatus {
+  provider: string
+  hasKey: boolean
+  model: string
+}
+
+export async function getConfigStatus(): Promise<ConfigStatus> {
+  return request<ConfigStatus>('/settings/config')
+}
+
+export async function getProviders(): Promise<{ providers: Provider[] }> {
+  return request<{ providers: Provider[] }>('/settings/providers')
+}
+
+export async function setProvider(provider: string): Promise<ConfigStatus> {
+  return request<ConfigStatus>('/settings/provider', {
+    method: 'POST',
+    body: JSON.stringify({ provider }),
+  })
+}
+
+export async function setModel(model: string): Promise<ConfigStatus> {
+  return request<ConfigStatus>('/settings/model', {
+    method: 'POST',
+    body: JSON.stringify({ model }),
+  })
+}
+
 // ===== API 函数 =====
 
 export async function guestLogin(): Promise<{ token: string }> {
